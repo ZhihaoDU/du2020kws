@@ -8,7 +8,16 @@ __pycache__/
 
 # C extensions
 *.so
-
+fft_masking_bilstm_adjusted_baseline/
+fft_masking_bilstm_adjusted_jointtraining/
+joint_model/
+training_data/
+utils/Tensorboard/
+utils/code/
+utils/code.rar
+raspberry_pi_experiments/
+data.zip
+model.zip
 # Distribution / packaging
 .Python
 build/
