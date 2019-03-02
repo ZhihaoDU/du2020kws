@@ -62,6 +62,81 @@ class PowCRN(nn.Module):
         return output.squeeze(1)
 
 
+class MelCRN(nn.Module):
+
+    def __init__(self, conv_filters=32, lstm_hidden_units=32, noncausal=False):
+        super(MelCRN, self).__init__()
+        self.conv1 = nn.Sequential(
+            # 1 x 101 x 40
+            nn.Conv2d(1, conv_filters, 4, 2, 1),
+            nn.BatchNorm2d(conv_filters),
+            nn.ReLU(),
+            # nf x 50 x 20
+        )
+        self.conv2 = nn.Sequential(
+            # nf x 50 x 20
+            nn.Conv2d(conv_filters, conv_filters * 2, 4, 2, 1),
+            nn.BatchNorm2d(conv_filters*2),
+            nn.ReLU(),
+            # nf*2 x 25 x 10
+        )
+        self.conv3 = nn.Sequential(
+            # nf*2 x 25 x 10
+            nn.Conv2d(conv_filters * 2, conv_filters * 4, (3, 4), (1, 2), 1),
+            nn.BatchNorm2d(conv_filters * 4),
+            nn.ReLU(),
+            # nf*4 x 25 x 5
+        )
+        self.lstm = nn.LSTM(conv_filters * 4 * 5, lstm_hidden_units, 1, batch_first=True, bidirectional=noncausal)
+        self.fc = nn.Sequential(
+            nn.Linear(lstm_hidden_units*2 if noncausal else lstm_hidden_units, conv_filters * 4 * 5),
+            nn.BatchNorm1d(conv_filters * 4 * 5),
+            nn.ReLU(),
+        )
+        self.deconv1 = nn.Sequential(
+            # 4*nf x 25 x 5
+            nn.ConvTranspose2d(conv_filters * 8, conv_filters * 2, (3, 4), (1, 2), 1),
+            nn.BatchNorm2d(conv_filters * 2),
+            nn.LeakyReLU(0.1),
+            # 2*nf x 25 x 10
+        )
+        self.deconv2 = nn.Sequential(
+            # 2*nf x 25 x 10
+            nn.ConvTranspose2d(conv_filters * 4, conv_filters, 4, 2, 1),
+            nn.BatchNorm2d(conv_filters),
+            nn.LeakyReLU(0.1),
+            # nf x 50 x 20
+        )
+        self.deconv3 = nn.Sequential(
+            # nf x 50 x 20
+            nn.ConvTranspose2d(conv_filters * 2, conv_filters, (5, 4), 2, 1),
+            nn.BatchNorm2d(conv_filters),
+            nn.LeakyReLU(0.1),
+            # nf x 101 x 40
+            nn.Conv2d(conv_filters, 1, 3, 1, 1),
+            nn.Sigmoid()
+            # 1 x 101 x 40
+        )
+        self.conv_filters = conv_filters
+        self.lstm_hidden_units = lstm_hidden_units
+        self.noncausal = noncausal
+
+    def forward(self, input):
+        c1 = self.conv1(input.unsqueeze(1))
+        c2 = self.conv2(c1)
+        c3 = self.conv3(c2)
+        lstm_in = c3.permute(0, 2, 1, 3).contiguous().view(-1, 25, self.conv_filters * 4 * 5)
+        h0 = torch.zeros(2 if self.noncausal else 1, c2.size(0), self.lstm_hidden_units).to(input)
+        c0 = torch.zeros(2 if self.noncausal else 1, c2.size(0), self.lstm_hidden_units).to(input)
+        lstm_out, _ = self.lstm(lstm_in, (h0, c0))
+        conv_in = self.fc(lstm_out.contiguous().view(-1, self.lstm_hidden_units*2 if self.noncausal else self.lstm_hidden_units))
+        conv_in = conv_in.view(input.size(0), 25, self.conv_filters * 4, 5).permute(0, 2, 1, 3)
+        d1 = self.deconv1(torch.cat([conv_in, c3], dim=1))
+        d2 = self.deconv2(torch.cat([d1, c2], dim=1))
+        output = self.deconv3(torch.cat([d2, c1], dim=1))
+        return output.squeeze(1)
+
+
 def count_parameters(model):
     parameter_num_list = [p.numel() for p in model.parameters() if p.requires_grad]
     return sum(parameter_num_list), parameter_num_list
